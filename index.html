@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SVG Полигон редактор</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="controls">
+  <div class="left-buttons">
+    <button id="createBtn">Создать</button>
+  </div>
+  <div class="right-buttons">
+    <button id="saveBtn">Сохранить</button>
+    <button id="resetBtn">Сбросить</button>
+  </div>
+</div>
+  <div class="zones">
+    <div id="bufferZone" class="zone buffer-zone"></div>
+    <polygon-editor id="workZone"></polygon-editor>
+  </div>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

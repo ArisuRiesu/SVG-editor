@@ -1,0 +1,96 @@
+/* Главная страница */
+body {
+  font-family: sans-serif;
+  margin: 0;
+  background-color: #111; 
+  color: white;
+}
+
+/* Контроль (управление) */
+.controls {
+  padding: 10px 20px;
+  background-color: #1c1c1c;
+  border-bottom: 2px solid #666;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.left-buttons,
+.right-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.left-buttons {
+  margin-left: 10px;
+}
+
+.right-buttons {
+  margin-right: 10px;
+}
+
+button {
+  margin: 0;
+  padding: 8px 12px;
+  background-color: gray;
+  color: black;
+  border: 1px solid #555;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button:hover {
+  background-color: gray;
+}
+
+/* Зоны */
+.zones {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 50px);
+}
+
+/* Общий стиль зоны */
+.zone {
+  flex: 1;
+  border: 2px solid #666; 
+  overflow: auto;
+  position: relative;
+}
+
+/* Зона обмена */
+.buffer-zone {
+  background-color: #222; 
+  padding: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  border-bottom: 2px solid #666; 
+}
+
+/* Обёртка для полигона */
+.drag-wrapper {
+  display: inline-block;
+}
+
+/* Рабочая зона */
+polygon-editor {
+  flex: 1;
+  background-color: #1a1a1a;
+  border-top: 2px solid #666;
+  display: block;
+  position: relative;
+}
+
+/* SVG Полигон */
+polygon {
+  cursor: move;
+}
+
+/* Стиль для точек полигона */
+.axis-label {
+  fill: #aaa;
+  font-size: 12px;
+  user-select: none;
+}
