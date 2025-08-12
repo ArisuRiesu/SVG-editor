@@ -39,6 +39,10 @@ class PolygonEditor extends HTMLElement {  // Создаём кастомный 
     container.appendChild(svg);
     this.shadowRoot.appendChild(container);
 
+    this.draggingPolygon = null;
+    this.dragOffset = { x: 0, y: 0 };
+
+
     // Подключаем обработчики событий
     this._bindEvents();
 
@@ -54,6 +58,10 @@ class PolygonEditor extends HTMLElement {  // Создаём кастомный 
     this.svg.addEventListener('mousedown', this._onMouseDown.bind(this)); // Начало панорамирования
     this.svg.addEventListener('mousemove', this._onMouseMove.bind(this)); // Перемещение при панорамировании
     this.svg.addEventListener('mouseup', this._onMouseUp.bind(this));     // Конец панорамирования
+    this.svg.addEventListener('mousedown', this._onPolygonMouseDown.bind(this));
+    this.svg.addEventListener('mousemove', this._onPolygonMouseMove.bind(this));
+    this.svg.addEventListener('mouseup', this._onPolygonMouseUp.bind(this));
+    this.svg.addEventListener('mouseleave', this._onPolygonMouseUp.bind(this));
   }
 
   // Обработка события "Drop" — вставка полигона
@@ -117,9 +125,11 @@ class PolygonEditor extends HTMLElement {  // Создаём кастомный 
 
   // Начало панорамирования
   _onMouseDown(e) {
-    this.isPanning = true;
-    this.start = { x: e.clientX, y: e.clientY };
-    this.svg.style.cursor = 'grabbing';
+    if (e.target.tagName !== 'polygon') {
+      this.isPanning = true;
+      this.start = { x: e.clientX, y: e.clientY };
+      this.svg.style.cursor = 'grabbing';
+    }
   }
 
   // Перемещение при панорамировании
@@ -161,6 +171,85 @@ class PolygonEditor extends HTMLElement {  // Создаём кастомный 
 
     // Перерисовываем сетку для нового масштаба
     this._drawGrid();
+  }
+
+   _onPolygonMouseDown(e) {
+    if (e.target.tagName === 'polygon') {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // Convert mouse position to SVG coordinates
+      const rect = this.svg.getBoundingClientRect();
+      const mouseX = (e.clientX - rect.left) / this.scale - this.offset.x;
+      const mouseY = (e.clientY - rect.top) / this.scale - this.offset.y;
+      
+      // Get polygon points
+      const points = e.target.getAttribute('points')
+        .split(' ')
+        .map(p => {
+          const [x, y] = p.split(',').map(Number);
+          return { x, y };
+        });
+      
+      // Find the closest point to determine offset
+      let minDist = Infinity;
+      points.forEach(p => {
+        const dist = Math.sqrt((p.x - mouseX) ** 2 + (p.y - mouseY) ** 2);
+        if (dist < minDist) {
+          minDist = dist;
+          this.dragOffset = { x: mouseX - p.x, y: mouseY - p.y };
+        }
+      });
+      
+      this.draggingPolygon = e.target;
+      this.svg.style.cursor = 'grabbing';
+    }
+  }
+
+
+  _onPolygonMouseMove(e) {
+    if (!this.draggingPolygon) return;
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Convert mouse position to SVG coordinates
+    const rect = this.svg.getBoundingClientRect();
+    const mouseX = (e.clientX - rect.left) / this.scale - this.offset.x;
+    const mouseY = (e.clientY - rect.top) / this.scale - this.offset.y;
+    
+    // Calculate new position
+    const newX = mouseX - this.dragOffset.x;
+    const newY = mouseY - this.dragOffset.y;
+    
+    // Get current points
+    const points = this.draggingPolygon.getAttribute('points')
+      .split(' ')
+      .map(p => {
+        const [x, y] = p.split(',').map(Number);
+        return { x, y };
+      });
+    
+    // Calculate center of polygon
+    const center = points.reduce((acc, p) => {
+      return { x: acc.x + p.x / points.length, y: acc.y + p.y / points.length };
+    }, { x: 0, y: 0 });
+    
+    // Calculate translation vector
+    const dx = newX - center.x;
+    const dy = newY - center.y;
+    
+    // Generate new points
+    const newPoints = points.map(p => `${p.x + dx},${p.y + dy}`).join(' ');
+    
+    // Update polygon
+    this.draggingPolygon.setAttribute('points', newPoints);
+  }
+
+    _onPolygonMouseUp(e) {
+    if (this.draggingPolygon) {
+      this.draggingPolygon = null;
+      this.svg.style.cursor = 'grab';
+    }
   }
 
   // Отрисовка сетки и осей

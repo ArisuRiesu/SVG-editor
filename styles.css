@@ -94,3 +94,10 @@ polygon {
   font-size: 12px;
   user-select: none;
 }
+polygon {
+  cursor: grab;
+}
+
+polygon:active {
+  cursor: grabbing;
+}
