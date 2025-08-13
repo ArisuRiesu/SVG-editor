@@ -69,7 +69,6 @@ class PolygonEditor extends HTMLElement {  // Кастомный элемент 
 
   const points = e.dataTransfer.getData('text/plain');
   if (!points) return;
-
   // Получаем размеры SVG и координаты курсора относительно SVG
   const rect = this.svg.getBoundingClientRect();
   const clientX = e.clientX;
