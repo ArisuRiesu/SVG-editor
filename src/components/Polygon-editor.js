@@ -53,17 +53,17 @@ class PolygonEditor extends HTMLElement {  // Кастомный элемент 
   _bindEvents() {
     this.svg.addEventListener('dragover', (e) => e.preventDefault());  // Разрешаем перетаскивание
     this.svg.addEventListener('drop', this._onDrop.bind(this));        // Обработка отпускания
-    this.svg.addEventListener('wheel', this._onZoom.bind(this), { passive: false }); // Зум колесом
-    this.svg.addEventListener('mousedown', this._onMouseDown.bind(this)); // Начало перемещения
-    this.svg.addEventListener('mousemove', this._onMouseMove.bind(this)); // Перемещение
-    this.svg.addEventListener('mouseup', this._onMouseUp.bind(this));     // Конец перемещения
-    this.svg.addEventListener('mousedown', this._onPolygonMouseDown.bind(this));
-    this.svg.addEventListener('mousemove', this._onPolygonMouseMove.bind(this));
-    this.svg.addEventListener('mouseup', this._onPolygonMouseUp.bind(this));
-    this.svg.addEventListener('mouseleave', this._onPolygonMouseUp.bind(this));
+    this.svg.addEventListener('wheel', this._onZoom.bind(this), { passive: false }); // Зум колесом мыши
+    this.svg.addEventListener('mousedown', this._onMouseDown.bind(this)); // Начало панорамирования (перемещения рабочей области)
+    this.svg.addEventListener('mousemove', this._onMouseMove.bind(this)); // Обработка движения мыши при панорамировании
+    this.svg.addEventListener('mouseup', this._onMouseUp.bind(this));     // Конец панорамирования
+    this.svg.addEventListener('mousedown', this._onPolygonMouseDown.bind(this)); // Начало перетаскивания полигона
+    this.svg.addEventListener('mousemove', this._onPolygonMouseMove.bind(this)); // Перемещение полигона мышью
+    this.svg.addEventListener('mouseup', this._onPolygonMouseUp.bind(this));     // Отпускание полигона
+    this.svg.addEventListener('mouseleave', this._onPolygonMouseUp.bind(this));  // Отпускание полигона при выходе мыши за пределы SVG
   }
 
-  // Обработка добавления полигона
+  // Обработка добавления полигона через drop
   _onDrop(e) {
     e.preventDefault();
 
@@ -89,14 +89,14 @@ class PolygonEditor extends HTMLElement {  // Кастомный элемент 
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
 
-    // Вычисляем смещение
+    // Вычисляем смещение, чтобы центр полигона совпал с точкой drop
     const dx = svgX - centerX;
     const dy = svgY - centerY;
 
-    // Генерируем новые координаты
+    // Генерируем новые координаты полигона с учетом смещения
     const newPoints = parsedPoints.map(p => `${p.x + dx},${p.y + dy}`).join(' ');
 
-    // Создаем SVG-полигон
+    // Создаем SVG-полигон с новыми координатами
     const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
     poly.setAttribute('points', newPoints);
     poly.setAttribute('fill', 'crimson');
@@ -106,38 +106,112 @@ class PolygonEditor extends HTMLElement {  // Кастомный элемент 
     this.polygonLayer.appendChild(poly);
   }
 
-  // Обработка зума
+  // Обработка зума колесом мыши
   _onZoom(e) {
     e.preventDefault();
-    const zoomFactor = 1.1;
-    const rect = this.svg.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+    const zoomFactor = 1.03;
+    const minScale = 0.3;
+    const maxScale = 5;
 
-    // Текущая позиция мыши в мировых координатах
-    const worldX = mouseX / this.scale - this.offset.x;
-    const worldY = mouseY / this.scale - this.offset.y;
-
-    // Применяем зум
     if (e.deltaY < 0) {
-        this.scale *= zoomFactor;
+        this.scale *= zoomFactor;   // Зумируем внутрь
     } else {
-        this.scale /= zoomFactor;
+        this.scale /= zoomFactor;   // Зумируем наружу
     }
-    this.scale = Math.max(0.1, Math.min(this.scale, 10));
+    this.scale = Math.max(minScale, Math.min(this.scale, maxScale)); // Ограничиваем масштаб
 
-    // Запрещаем отрицательные координаты
-    const newOffsetX = Math.min(this.offset.x, 0);
-    const newOffsetY = Math.min(this.offset.y, 0);
+    this._centerPolygonsAndScale(); // Центрируем и масштабируем полигоны
+    this._drawGrid();               // Перерисовываем сетку
+  }
+
+  // Центрирование полигона и применение текущего масштаба
+  _centerPolygonsAndScale() {
+    const rect = this.svg.getBoundingClientRect();
+    const svgCenterX = rect.width / 2;
+    const svgCenterY = rect.height / 2;
+
+    // Получаем ограничивающую рамку всех полигонов в мировых координатах
+    const polys = Array.from(this.polygonLayer.querySelectorAll('polygon'));
+    if (polys.length === 0) return;
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    polys.forEach(poly => {
+        const points = poly.getAttribute('points').trim().split(/\s+/).map(p => {
+            const [x, y] = p.split(',').map(Number);
+            return { x, y };
+        });
+        points.forEach(p => {
+            if (p.x < minX) minX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y > maxY) maxY = p.y;
+        });
+    });
+
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    // Формируем строку трансформации:
+    // 1) Перемещаем центр полигона в начало координат
+    // 2) Масштабируем
+    // 3) Перемещаем к центру SVG области (экрана)
+    const translateToOrigin = `translate(${-centerX}, ${-centerY})`;
+    const scale = `scale(${this.scale})`;
+    const translateToCenter = `translate(${svgCenterX}, ${svgCenterY})`;
+
+    const transform = `${translateToCenter} ${scale} ${translateToOrigin}`;
+
+    this.polygonLayer.setAttribute('transform', transform);
+  }
+
+  // Конвертация координат экрана в координаты полигона (мировые)
+  _screenToPolygonCoords(clientX, clientY) {
+    const rect = this.svg.getBoundingClientRect();
+    const svgCenterX = rect.width / 2;
+    const svgCenterY = rect.height / 2;
+
+    // Конвертируем клиентские координаты в SVG координаты относительно SVG
+    const svgX = clientX - rect.left;
+    const svgY = clientY - rect.top;
+
+    // Обратное преобразование:
+    // Шаг 1: смещаем обратно на центр SVG
+    let x = svgX - svgCenterX;
+    let y = svgY - svgCenterY;
+
+    // Шаг 2: обратное масштабирование
+    x /= this.scale;
+    y /= this.scale;
+
+    // Шаг 3: перемещаем обратно на центр полигона (поскольку в трансформации есть translate(-center))
+    // Получаем центр полигона
+    const polys = Array.from(this.polygonLayer.querySelectorAll('polygon'));
+    if (polys.length === 0) return { x: 0, y: 0 };
     
-    // Корректируем смещение для центрирования
-    this.offset.x = newOffsetX + (mouseX / this.scale - worldX) * (1 - 1/zoomFactor);
-    this.offset.y = newOffsetY + (mouseY / this.scale - worldY) * (1 - 1/zoomFactor);
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    polys.forEach(poly => {
+        const points = poly.getAttribute('points').trim().split(/\s+/).map(p => {
+            const [px, py] = p.split(',').map(Number);
+            return { x: px, y: py };
+        });
+        points.forEach(p => {
+            if (p.x < minX) minX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y > maxY) maxY = p.y;
+        });
+    });
 
-    this._applyTransform();
-}
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
 
-  // Начало панорамирования
+    x += centerX;
+    y += centerY;
+
+    return { x, y };
+  }
+
+  // Начало панорамирования (перемещения рабочей области)
   _onMouseDown(e) {
     if (e.target.tagName !== 'polygon') {
       this.isPanning = true;
@@ -146,7 +220,7 @@ class PolygonEditor extends HTMLElement {  // Кастомный элемент 
     }
   }
 
-  // Перемещение при панорамировании
+  // Обработка движения мыши при панорамировании
   _onMouseMove(e) {
     if (!this.isPanning) return;
 
@@ -154,11 +228,11 @@ class PolygonEditor extends HTMLElement {  // Кастомный элемент 
     const dy = e.clientY - this.start.y;
     this.start = { x: e.clientX, y: e.clientY };
 
-    // Новое смещение
+    // Новое смещение с учетом масштаба
     let newOffsetX = this.offset.x + dx / this.scale;
     let newOffsetY = this.offset.y + dy / this.scale;
 
-    // Запрещаем отрицательные координаты
+    // Запрещаем смещение в положительную сторону (по условию)
     newOffsetX = Math.min(newOffsetX, 0);
     newOffsetY = Math.min(newOffsetY, 0);
 
@@ -174,94 +248,137 @@ class PolygonEditor extends HTMLElement {  // Кастомный элемент 
     this.svg.style.cursor = 'grab';
   }
 
-  // Применение трансформации
-_applyTransform() {
-    // Трансформация только для слоя полигонов
-    const transform = `translate(${this.offset.x}, ${this.offset.y}) scale(${this.scale})`;
-    this.polygonLayer.setAttribute('transform', transform);
-    
-    // Сетка остается без трансформации
-    this.gridLayer.removeAttribute('transform');
-    
-    // Перерисовываем сетку
-    this._drawGrid();
-}
+  // Применение трансформации к полигонам
+  _applyTransform() {
+    if (!this._center) {
+        this._center = { x: 0, y: 0 };
+    }
 
-   // Начало перемещения полигона
-   _onPolygonMouseDown(e) {
+    const rect = this.svg.getBoundingClientRect();
+    const svgCenterX = rect.width / 2;
+    const svgCenterY = rect.height / 2;
+
+    // Трансформация: сдвигаем к центру SVG, масштабируем, сдвигаем обратно по центру полигона
+    const transform = 
+      `translate(${svgCenterX}, ${svgCenterY}) scale(${this.scale}) translate(${-this._center.x}, ${-this._center.y})`;
+
+    this.polygonLayer.setAttribute('transform', transform);
+
+    // Сетка не масштабируется, просто перерисовываем её
+    this.gridLayer.removeAttribute('transform');
+    this._drawGrid();
+  }
+
+  // Начало перетаскивания полигона
+  _onPolygonMouseDown(e) {
     if (e.target.tagName === 'polygon') {
-      e.preventDefault();
-      e.stopPropagation();
-      
-      // Координаты мыши в системе SVG
-      const rect = this.svg.getBoundingClientRect();
-      const mouseX = (e.clientX - rect.left) / this.scale - this.offset.x;
-      const mouseY = (e.clientY - rect.top) / this.scale - this.offset.y;
-      
-      // Получаем точки полигона
-      const points = e.target.getAttribute('points')
-        .split(' ')
-        .map(p => {
-          const [x, y] = p.split(',').map(Number);
-          return { x, y };
+        e.preventDefault();
+        e.stopPropagation();
+
+        const mouse = this._screenToPolygonCoords(e.clientX, e.clientY);
+
+        // Получаем точки полигона
+        const points = e.target.getAttribute('points')
+            .split(' ')
+            .map(p => {
+                const [x, y] = p.split(',').map(Number);
+                return { x, y };
+            });
+
+        // Находим ближайшую точку полигона к курсору для определения смещения при перетаскивании
+        let minDist = Infinity;
+        points.forEach(p => {
+            const dist = Math.hypot(p.x - mouse.x, p.y - mouse.y);
+            if (dist < minDist) {
+                minDist = dist;
+                this.dragOffset = { x: mouse.x - p.x, y: mouse.y - p.y };
+            }
         });
-      
-      // Находим ближайшую точку для смещения
-      let minDist = Infinity;
-      points.forEach(p => {
-        const dist = Math.sqrt((p.x - mouseX) ** 2 + (p.y - mouseY) ** 2);
-        if (dist < minDist) {
-          minDist = dist;
-          this.dragOffset = { x: mouseX - p.x, y: mouseY - p.y };
-        }
-      });
-      
-      this.draggingPolygon = e.target;
-      this.svg.style.cursor = 'grabbing';
+
+        this.draggingPolygon = e.target;
+        this.svg.style.cursor = 'grabbing';
     }
   }
 
-  // Перемещение полигона
+  // Перемещение полигона при перетаскивании
   _onPolygonMouseMove(e) {
     if (!this.draggingPolygon) return;
     e.preventDefault();
     e.stopPropagation();
-    
-    // Координаты мыши в системе SVG
-    const rect = this.svg.getBoundingClientRect();
-    const mouseX = (e.clientX - rect.left) / this.scale - this.offset.x;
-    const mouseY = (e.clientY - rect.top) / this.scale - this.offset.y;
-    
-    // Новая позиция
-    const newX = mouseX - this.dragOffset.x;
-    const newY = mouseY - this.dragOffset.y;
-    
-    // Текущие точки полигона
+
+    const mouse = this._screenToPolygonCoords(e.clientX, e.clientY);
+
+    const newX = mouse.x - this.dragOffset.x;
+    const newY = mouse.y - this.dragOffset.y;
+
     const points = this.draggingPolygon.getAttribute('points')
-      .split(' ')
-      .map(p => {
-        const [x, y] = p.split(',').map(Number);
-        return { x, y };
-      });
-    
-    // Центр полигона
+        .split(' ')
+        .map(p => {
+            const [x, y] = p.split(',').map(Number);
+            return { x, y };
+        });
+
+    // Находим центр полигона
     const center = points.reduce((acc, p) => {
-      return { x: acc.x + p.x / points.length, y: acc.y + p.y / points.length };
+        return { x: acc.x + p.x / points.length, y: acc.y + p.y / points.length };
     }, { x: 0, y: 0 });
-    
-    // Вектор перемещения
+
+    // Смещаем все точки полигона согласно новому положению центра
     const dx = newX - center.x;
     const dy = newY - center.y;
-    
-    // Новые точки полигона
+
     const newPoints = points.map(p => `${p.x + dx},${p.y + dy}`).join(' ');
-    
-    // Обновляем полигон
     this.draggingPolygon.setAttribute('points', newPoints);
   }
 
-  // Конец перемещения полигона
-    _onPolygonMouseUp(e) {
+  // Центрирование и масштабирование всех полигонов, чтобы они поместились в область просмотра
+  fitPolygonsToView() {
+    const polygons = Array.from(this.polygonLayer.querySelectorAll('polygon'));
+    if (polygons.length === 0) return; // Нет полигонов
+
+    // Находим ограничивающую рамку всех полигонов
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    polygons.forEach(poly => {
+        const points = poly.getAttribute('points').trim().split(/\s+/).map(p => {
+            const [x, y] = p.split(',').map(Number);
+            return { x, y };
+        });
+        points.forEach(p => {
+            if (p.x < minX) minX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y > maxY) maxY = p.y;
+        });
+    });
+
+    const bboxWidth = maxX - minX;
+    const bboxHeight = maxY - minY;
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    const rect = this.svg.getBoundingClientRect();
+    const svgWidth = rect.width;
+    const svgHeight = rect.height;
+
+    if (bboxWidth === 0 || bboxHeight === 0) return;
+
+    // Вычисляем масштаб для размещения всех полигонов с отступом 20%
+    const scaleX = (svgWidth * 0.8) / bboxWidth;
+    const scaleY = (svgHeight * 0.8) / bboxHeight;
+
+    this.scale = Math.min(scaleX, scaleY);
+
+    // Сброс смещения, т.к. центрируем через трансформацию
+    this.offset = { x: 0, y: 0 };
+
+    // Сохраняем центр полигона для трансформации
+    this._center = { x: centerX, y: centerY };
+
+    this._applyTransform();
+  }
+
+  // Конец перетаскивания полигона
+  _onPolygonMouseUp(e) {
     if (this.draggingPolygon) {
       this.draggingPolygon = null;
       this.svg.style.cursor = 'grab';
@@ -282,7 +399,7 @@ _applyTransform() {
     const worldRight = worldLeft + width / this.scale;
     const worldBottom = worldTop + height / this.scale;
 
-    // Вертикальные линии
+    // Вертикальные линии сетки
     let startX = Math.floor(worldLeft / spacing) * spacing;
     let endX = Math.ceil(worldRight / spacing) * spacing;
     for (let x = startX; x <= endX; x += spacing) {
@@ -297,7 +414,7 @@ _applyTransform() {
       this.gridLayer.appendChild(line);
     }
 
-    // Горизонтальные линии
+    // Горизонтальные линии сетки
     let startY = Math.floor(worldTop / spacing) * spacing;
     let endY = Math.ceil(worldBottom / spacing) * spacing;
     for (let y = startY; y <= endY; y += spacing) {
@@ -312,7 +429,7 @@ _applyTransform() {
       this.gridLayer.appendChild(line);
     }
 
-    // Фон осей
+    // Фон осей координат
     const xBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
     xBg.setAttribute('x', 0);
     xBg.setAttribute('y', height - 20);
@@ -329,7 +446,7 @@ _applyTransform() {
     yBg.setAttribute('fill', '#808080');
     this.gridLayer.appendChild(yBg);
 
-    // Линии осей
+    // Линии осей координат
     const xAxis = document.createElementNS('http://www.w3.org/2000/svg', 'line');
     xAxis.setAttribute('x1', 0);
     xAxis.setAttribute('y1', height - 0.5);
@@ -348,9 +465,9 @@ _applyTransform() {
     yAxis.setAttribute('stroke-width', '2');
     this.gridLayer.appendChild(yAxis);
 
-    // Подписи осей
+    // Подписи осей X
     for (let x = startX; x <= endX; x += spacing) {
-      if (x < 0) continue; // Пропускаем отрицательные X
+      if (x < 0) continue; // Пропускаем отрицательные значения X
       const screenX = (x + this.offset.x) * this.scale;
       const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       label.setAttribute('x', screenX + 2);
@@ -362,6 +479,7 @@ _applyTransform() {
       this.gridLayer.appendChild(label);
     }
 
+    // Подписи осей Y
     for (let y = startY; y <= endY; y += spacing) {
       const screenY = height - ((y + this.offset.y) * this.scale);
       const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -375,9 +493,9 @@ _applyTransform() {
     }
   }
 
-  // Загрузка полигонов
+  // Загрузка полигонов из массива строк с точками
   loadPolygons(pointsArray) {
-    this.polygonLayer.innerHTML = '';
+    this.polygonLayer.innerHTML = ''; // Очищаем слой с полигонами
     pointsArray.forEach(points => {
       const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
       poly.setAttribute('points', points);
@@ -386,19 +504,20 @@ _applyTransform() {
       poly.setAttribute('stroke-width', '1');
       this.polygonLayer.appendChild(poly);
     });
+    this.fitPolygonsToView(); // Автоматически подгоняем масштаб и позицию
   }
 
-  // Получение всех полигонов
+  // Получение массива всех полигонов (их точек)
   getPolygons() {
     return Array.from(this.polygonLayer.querySelectorAll('polygon'))
       .map(p => p.getAttribute('points'));
   }
 
-  // Очистка полигонов
+  // Очистка всех полигонов
   clearPolygons() {
     this.polygonLayer.innerHTML = '';
   }
 }
 
-// Регистрация компонента
+// Регистрация кастомного элемента
 customElements.define('polygon-editor', PolygonEditor);
