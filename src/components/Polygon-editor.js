@@ -65,47 +65,59 @@ class PolygonEditor extends HTMLElement {  // Кастомный элемент 
 
   // Обработка добавления полигона через drop
   _onDrop(e) {
-    e.preventDefault();
+  e.preventDefault();
 
-    const points = e.dataTransfer.getData('text/plain'); // Получаем данные полигона
-    if (!points) return;
+  const points = e.dataTransfer.getData('text/plain');
+  if (!points) return;
 
-    // Конвертируем координаты курсора в мировые координаты SVG
-    const rect = this.svg.getBoundingClientRect();
-    const svgX = (e.clientX - rect.left) / this.scale - this.offset.x;
-    const svgY = (e.clientY - rect.top) / this.scale - this.offset.y;
+  // Получаем размеры SVG и координаты курсора относительно SVG
+  const rect = this.svg.getBoundingClientRect();
+  const clientX = e.clientX;
+  const clientY = e.clientY;
+  const svgCenterX = rect.width / 2;
+  const svgCenterY = rect.height / 2;
 
-    // Парсим точки полигона
-    const parsedPoints = points.trim().split(' ').map(p => {
-      const [x, y] = p.split(',').map(Number);
-      return { x, y };
-    });
+  // Переводим экранные координаты в координаты SVG с учётом трансформаций:
+  // Шаги: отнять центр SVG, разделить на масштаб, добавить центр полигона (this._center)
 
-    // Находим центр полигона
-    const minX = Math.min(...parsedPoints.map(p => p.x));
-    const minY = Math.min(...parsedPoints.map(p => p.y));
-    const maxX = Math.max(...parsedPoints.map(p => p.x));
-    const maxY = Math.max(...parsedPoints.map(p => p.y));
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
+  let x = clientX - rect.left; // координаты относительно SVG
+  let y = clientY - rect.top;
 
-    // Вычисляем смещение, чтобы центр полигона совпал с точкой drop
-    const dx = svgX - centerX;
-    const dy = svgY - centerY;
+  // Преобразование обратно из screen -> polygon coords:
+  x = (x - svgCenterX) / this.scale + (this._center ? this._center.x : 0);
+  y = (y - svgCenterY) / this.scale + (this._center ? this._center.y : 0);
 
-    // Генерируем новые координаты полигона с учетом смещения
-    const newPoints = parsedPoints.map(p => `${p.x + dx},${p.y + dy}`).join(' ');
+  // Парсим точки полигона
+  const parsedPoints = points.trim().split(' ').map(p => {
+    const [px, py] = p.split(',').map(Number);
+    return { x: px, y: py };
+  });
 
-    // Создаем SVG-полигон с новыми координатами
-    const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-    poly.setAttribute('points', newPoints);
-    poly.setAttribute('fill', 'crimson');
-    poly.setAttribute('stroke', '#000');
-    poly.setAttribute('stroke-width', '1');
+  // Находим центр полигона
+  const minX = Math.min(...parsedPoints.map(p => p.x));
+  const minY = Math.min(...parsedPoints.map(p => p.y));
+  const maxX = Math.max(...parsedPoints.map(p => p.x));
+  const maxY = Math.max(...parsedPoints.map(p => p.y));
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
 
-    this.polygonLayer.appendChild(poly);
-  }
+  // Смещаем точки так, чтобы центр полигона совпал с точкой drop
+  const dx = x - centerX;
+  const dy = y - centerY;
 
+  const newPoints = parsedPoints.map(p => `${p.x + dx},${p.y + dy}`).join(' ');
+
+  const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+  poly.setAttribute('points', newPoints);
+  poly.setAttribute('fill', 'crimson');
+  poly.setAttribute('stroke', '#000');
+  poly.setAttribute('stroke-width', '1');
+
+  this.polygonLayer.appendChild(poly);
+
+  // После добавления полигона можно обновить вид (например, центрировать и масштабировать)
+  this.fitPolygonsToView();
+}
   // Обработка зума колесом мыши
   _onZoom(e) {
     e.preventDefault();
@@ -212,35 +224,38 @@ class PolygonEditor extends HTMLElement {  // Кастомный элемент 
   }
 
   // Начало панорамирования (перемещения рабочей области)
-  _onMouseDown(e) {
-    if (e.target.tagName !== 'polygon') {
-      this.isPanning = true;
-      this.start = { x: e.clientX, y: e.clientY };
-      this.svg.style.cursor = 'grabbing';
-    }
-  }
-
-  // Обработка движения мыши при панорамировании
-  _onMouseMove(e) {
-    if (!this.isPanning) return;
-
-    const dx = e.clientX - this.start.x;
-    const dy = e.clientY - this.start.y;
+_onMouseDown(e) {
+  if (e.target.tagName !== 'polygon') {
+    this.isPanning = true;
     this.start = { x: e.clientX, y: e.clientY };
 
-    // Новое смещение с учетом масштаба
-    let newOffsetX = this.offset.x + dx / this.scale;
-    let newOffsetY = this.offset.y + dy / this.scale;
+    // Сохраняем стартовое смещение
+    this.startOffset = { x: this.offset.x, y: this.offset.y };
 
-    // Запрещаем смещение в положительную сторону (по условию)
-    newOffsetX = Math.min(newOffsetX, 0);
-    newOffsetY = Math.min(newOffsetY, 0);
-
-    this.offset.x = newOffsetX;
-    this.offset.y = newOffsetY;
-
-    this._applyTransform();
+    this.svg.style.cursor = 'grabbing';
   }
+}
+
+_onMouseMove(e) {
+  if (!this.isPanning) return;
+
+  // Вычисляем разницу движения мыши
+  const dx = e.clientX - this.start.x;
+  const dy = e.clientY - this.start.y;
+
+  // Новое смещение = стартовое смещение + движение мыши / масштаб
+  let newOffsetX = this.startOffset.x + dx / this.scale;
+  let newOffsetY = this.startOffset.y + dy / this.scale;
+
+  // Ограничения (например, не давать уходить слишком далеко)
+  newOffsetX = Math.min(newOffsetX, 0);
+  newOffsetY = Math.min(newOffsetY, 0);
+
+  this.offset.x = newOffsetX;
+  this.offset.y = newOffsetY;
+
+  this._applyTransform();
+}
 
   // Конец панорамирования
   _onMouseUp() {
